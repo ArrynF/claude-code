@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Galaxy Explorer</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <canvas id="galaxy" aria-label="Galaxy map"></canvas>
+
+  <header id="topbar">
+    <div class="brand">
+      <span class="logo" aria-hidden="true"></span>
+      <input id="galaxyName" spellcheck="false" aria-label="Galaxy name" />
+    </div>
+    <div class="search">
+      <input id="search" type="search" placeholder="Search worlds…" autocomplete="off" aria-label="Search worlds" />
+      <div id="searchResults" class="dropdown" hidden></div>
+    </div>
+    <div class="actions">
+      <div class="seg" role="group" aria-label="Mode">
+        <button data-mode="explore" class="active">Explore</button>
+        <button data-mode="edit">Edit</button>
+      </div>
+      <button id="btnRoute" class="btn">Route planner</button>
+      <div class="menu-wrap">
+        <button id="btnMenu" class="btn icon" aria-label="Menu">⋯</button>
+        <div id="menu" class="dropdown right" hidden>
+          <button data-act="fit">Fit galaxy to screen</button>
+          <button data-act="new">Generate new galaxy</button>
+          <button data-act="export">Export galaxy (JSON)</button>
+          <button data-act="import">Import galaxy (JSON)</button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <div id="tooltip" hidden></div>
+
+  <aside id="routePanel" class="panel" hidden>
+    <div class="panel-head">
+      <h3>Route planner</h3>
+      <button class="close" data-close="routePanel" aria-label="Close">×</button>
+    </div>
+    <label>From <select id="routeFrom"></select></label>
+    <label>To <select id="routeTo"></select></label>
+    <label class="check"><input type="checkbox" id="avoidWormholes" /> Avoid wormholes</label>
+    <div class="row">
+      <button id="btnFindRoute" class="btn primary">Find route</button>
+      <button id="btnClearRoute" class="btn">Clear</button>
+    </div>
+    <div id="routeResult"></div>
+  </aside>
+
+  <div id="editBar" class="panel" hidden></div>
+
+  <div id="legend">
+    <span><i class="ln hyperlane"></i>Hyperlane</span>
+    <span><i class="ln trade"></i>Trade route</span>
+    <span><i class="ln wormhole"></i>Wormhole</span>
+  </div>
+
+  <div id="zoomCtl">
+    <button data-zoom="in" aria-label="Zoom in">+</button>
+    <button data-zoom="out" aria-label="Zoom out">−</button>
+    <button data-zoom="fit" aria-label="Fit to screen">⤢</button>
+  </div>
+
+  <section id="detail" hidden>
+    <div class="stage">
+      <canvas id="planetCanvas"></canvas>
+      <button id="btnBack" class="btn">← Galaxy</button>
+    </div>
+    <div id="detailPanel"></div>
+  </section>
+
+  <div id="toast" hidden></div>
+  <input type="file" id="importFile" accept="application/json,.json" hidden />
+
+  <script src="app.js"></script>
+</body>
+</html>
