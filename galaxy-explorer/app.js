@@ -14,6 +14,10 @@ function mulberry32(a) {
   };
 }
 const randSeed = () => (Math.random() * 2 ** 31) | 0;
+/** Random unique id for routes, e.g. "r3k9x2a". */
+const uid = prefix => prefix + Math.random().toString(36).slice(2, 9);
+/** Approximately normal random number in [-2, 2] from a seeded generator. */
+const gaussian = R => (R() + R() + R() - 1.5) / 1.5;
 
 function makeNoise(seed) {
   const r = mulberry32(seed);
@@ -43,7 +47,7 @@ function makeNoise(seed) {
     for (let i = 0; i < oct; i++) { s += a * n3(x * f, y * f, z * f); n += a; a *= 0.5; f *= 2.03; }
     return s / n;
   }
-  return { n3, fbm };
+  return { fbm };
 }
 
 const clamp = (v, a = 0, b = 1) => (v < a ? a : v > b ? b : v);
@@ -93,34 +97,42 @@ function landSea(o, h, d, lat, sea, land, iceLat) {
   if (iceLat && Math.abs(lat) > iceLat - (d - 0.5) * 0.18) mixInto(o, [236, 243, 252], 0.92);
 }
 
+// Per type: map colour, atmosphere [r, g, b, strength], cloud cover 0-1, noise frequency,
+// map size range, default climate, temperature/gravity/day-length ranges, habitability 0-1,
+// and a paint() that colours one texel from noise values h and d, latitude, crater value and palette.
 const TYPES = {
-  'Terran':    { color: '#5fb0ff', atmo: [120, 180, 255, 0.9], clouds: 0.85, cloudColor: [255, 255, 255], freq: 1.6, size: [10, 14], climate: 'Temperate', temp: [4, 24], grav: [0.8, 1.25],
+  Terran:      { color: '#5fb0ff', atmo: [120, 180, 255, 0.9], clouds: 0.85, cloudColor: [255, 255, 255], freq: 1.6, size: [10, 14], climate: 'Temperate', temp: [4, 24], grav: [0.8, 1.25], day: [14, 60], habit: 1,
                  paint(o, h, d, lat) { landSea(o, h, d, lat, 0.52, TERRAN_LAND, 0.86); } },
-  'Ocean':     { color: '#3d7dff', atmo: [100, 160, 255, 1], clouds: 0.9, cloudColor: [255, 255, 255], freq: 1.4, size: [10, 15], climate: 'Maritime', temp: [8, 28], grav: [0.7, 1.3],
+  Ocean:       { color: '#3d7dff', atmo: [100, 160, 255, 1], clouds: 0.9, cloudColor: [255, 255, 255], freq: 1.4, size: [10, 15], climate: 'Maritime', temp: [8, 28], grav: [0.7, 1.3], day: [14, 60], habit: 0.9,
                  paint(o, h, d, lat) { landSea(o, h, d, lat, 0.7, TERRAN_LAND, 0.92); } },
-  'Jungle':    { color: '#47c46b', atmo: [140, 220, 160, 0.8], clouds: 0.75, cloudColor: [240, 250, 245], freq: 1.9, size: [9, 13], climate: 'Humid', temp: [24, 38], grav: [0.9, 1.4],
+  Jungle:      { color: '#47c46b', atmo: [140, 220, 160, 0.8], clouds: 0.75, cloudColor: [240, 250, 245], freq: 1.9, size: [9, 13], climate: 'Humid', temp: [24, 38], grav: [0.9, 1.4], day: [14, 60], habit: 0.8,
                  paint(o, h, d, lat) { landSea(o, h, d, lat, 0.34, JUNGLE_LAND, 0); } },
-  'Desert':    { color: '#e0a35a', atmo: [240, 190, 130, 0.6], clouds: 0.18, cloudColor: [235, 200, 150], freq: 1.5, size: [8, 13], climate: 'Arid', temp: [30, 62], grav: [0.5, 1.1],
+  Desert:      { color: '#e0a35a', atmo: [240, 190, 130, 0.6], clouds: 0.18, cloudColor: [235, 200, 150], freq: 1.5, size: [8, 13], climate: 'Arid', temp: [30, 62], grav: [0.5, 1.1], day: [14, 60], habit: 0.4,
                  paint(o, h, d, lat) { grad(DESERT, h * 0.72 + d * 0.28, o); const s = 0.93 + 0.07 * Math.sin(d * 46 + lat * 10); o[0] *= s; o[1] *= s; o[2] *= s; if (Math.abs(lat) > 0.95) mixInto(o, [240, 230, 215], 0.7); } },
-  'Ice':       { color: '#bfe4ff', atmo: [190, 225, 255, 0.7], clouds: 0.3, cloudColor: [250, 252, 255], freq: 1.8, size: [8, 13], climate: 'Frozen', temp: [-120, -25], grav: [0.4, 1.0],
+  Ice:         { color: '#bfe4ff', atmo: [190, 225, 255, 0.7], clouds: 0.3, cloudColor: [250, 252, 255], freq: 1.8, size: [8, 13], climate: 'Frozen', temp: [-120, -25], grav: [0.4, 1.0], day: [14, 60], habit: 0.3,
                  paint(o, h, d) { grad(ICE, h, o); if (Math.abs(d - 0.5) < 0.018) mixInto(o, [70, 120, 175], 0.8); } },
-  'Volcanic':  { color: '#ff6a3a', atmo: [255, 120, 70, 0.6], clouds: 0.35, cloudColor: [80, 70, 70], freq: 2.0, size: [8, 12], climate: 'Scorching', temp: [180, 620], grav: [0.8, 1.6],
+  Volcanic:    { color: '#ff6a3a', atmo: [255, 120, 70, 0.6], clouds: 0.35, cloudColor: [80, 70, 70], freq: 2.0, size: [8, 12], climate: 'Scorching', temp: [180, 620], grav: [0.8, 1.6], day: [14, 60], habit: 0.1,
                  paint(o, h, d) {
                    grad(ROCK, h * 0.8 + d * 0.2, o);
                    const ridge = 1 - Math.abs(d * 2 - 1);
-                   let lava = Math.max(smooth(0.9, 0.99, ridge), smooth(0.24, 0.12, h));
+                   const lava = Math.max(smooth(0.9, 0.99, ridge), smooth(0.24, 0.12, h));
                    if (lava > 0) { mixInto(o, [255, 110 + 80 * lava, 25], lava); o[3] = lava * 255; }
                  } },
-  'Gas Giant': { color: '#d9b38c', atmo: [240, 210, 170, 0.7], clouds: 0, freq: 1.2, stretchY: 5, size: [17, 24], climate: 'Storm-wracked', temp: [-160, -90], grav: [2.0, 3.0], gas: true,
+  'Gas Giant': { color: '#d9b38c', atmo: [240, 210, 170, 0.7], clouds: 0, freq: 1.2, stretchY: 5, size: [17, 24], climate: 'Storm-wracked', temp: [-160, -90], grav: [2.0, 3.0], day: [8, 16], habit: 0.2, gas: true,
                  paint(o, h, d, lat, cr, pal) { const t = Math.sin(lat * pal.bands * Math.PI + (h - 0.5) * 4) * 0.5 + 0.5; grad(pal.stops, t * 0.78 + d * 0.22, o); } },
-  'Barren':    { color: '#a7a19a', atmo: [200, 200, 200, 0.12], clouds: 0, freq: 2.2, size: [6, 11], climate: 'Airless', temp: [-170, 120], grav: [0.15, 0.7], craters: 46,
+  Barren:      { color: '#a7a19a', atmo: [200, 200, 200, 0.12], clouds: 0, freq: 2.2, size: [6, 11], climate: 'Airless', temp: [-170, 120], grav: [0.15, 0.7], day: [14, 60], habit: 0.15, craters: 46,
                  paint(o, h, d, lat, cr) { grad(GRAY, h * 0.55 + d * 0.45, o); const k = 1 + cr * 0.4; o[0] *= k; o[1] *= k; o[2] *= k; } },
-  'Crystal':   { color: '#b07bff', atmo: [190, 140, 255, 0.85], clouds: 0, freq: 2.0, size: [7, 11], climate: 'Resonant', temp: [-60, 10], grav: [0.6, 1.2],
+  Crystal:     { color: '#b07bff', atmo: [190, 140, 255, 0.85], clouds: 0, freq: 2.0, size: [7, 11], climate: 'Resonant', temp: [-60, 10], grav: [0.6, 1.2], day: [14, 60], habit: 0.2,
                  paint(o, h, d) { const q = Math.floor(h * 7) / 7; grad(CRYSTAL, q * 0.72 + d * 0.28, o); if (h > 0.74) o[3] = (h - 0.74) / 0.26 * 210; } },
-  'Toxic':     { color: '#c6d24a', atmo: [210, 220, 90, 0.9], clouds: 0.95, cloudColor: [215, 205, 115], freq: 1.6, size: [9, 13], climate: 'Caustic', temp: [60, 240], grav: [0.8, 1.5],
+  Toxic:       { color: '#c6d24a', atmo: [210, 220, 90, 0.9], clouds: 0.95, cloudColor: [215, 205, 115], freq: 1.6, size: [9, 13], climate: 'Caustic', temp: [60, 240], grav: [0.8, 1.5], day: [14, 60], habit: 0.1,
                  paint(o, h, d, lat) { const t = Math.sin(lat * 7 + (h - 0.5) * 5) * 0.5 + 0.5; grad(TOXIC, t * 0.55 + h * 0.45, o); } },
 };
 const TYPE_NAMES = Object.keys(TYPES);
+const ZOOM_MIN = 0.12, ZOOM_MAX = 8;
+const FONT = 'ui-sans-serif, system-ui, sans-serif';
+// Spiral layout shared by world placement and the dust backdrop, so worlds sit on the arms.
+const ARMS = 3, SPIRAL_TWIST = 0.0042;
+const spiralAngle = (arm, dist) => (arm * Math.PI * 2) / ARMS + dist * SPIRAL_TWIST;
 const ROUTE_KINDS = {
   hyperlane: { label: 'Hyperlane', color: [110, 168, 255], icon: '━' },
   trade:     { label: 'Trade route', color: [255, 200, 90], icon: '┅' },
@@ -148,7 +160,7 @@ function getTexture(w, TW) {
   let t = texCache.get(key);
   if (t) return t;
   const TH = TW / 2;
-  const def = TYPES[w.type] || TYPES.Barren;
+  const def = TYPES[w.type];
   const N = makeNoise(w.seed), N2 = makeNoise(w.seed ^ 0x9e3779b9), N3 = makeNoise(w.seed ^ 0x51ed27);
   const tex = new Uint8ClampedArray(TW * TH * 4), cl = new Uint8Array(TW * TH);
   const craters = def.craters ? genCraters(w.seed, def.craters) : null;
@@ -217,14 +229,14 @@ function getSphereMap(S) {
       rim[k] = Math.pow(1 - nz, 2.2);
     }
   }
-  m = { S, mu, mv, sh, rim, al };
+  m = { mu, mv, sh, rim, al };
   sphereMaps.set(S, m);
   return m;
 }
 
 function renderSphere(ctx2d, img, map, T, w, rot, cloudRot) {
   const { mu, mv, sh, rim, al } = map, { tex, cl, TW, TH } = T;
-  const def = TYPES[w.type] || TYPES.Barren;
+  const def = TYPES[w.type];
   const cc = def.cloudColor || [255, 255, 255], hasC = !!def.clouds;
   const [ar, ag, ab, as] = def.atmo;
   const d = img.data, n = mu.length;
@@ -273,8 +285,8 @@ function drawRings(ctx, x, y, R, front, seed) {
   for (let i = 0; i < 26; i++) {
     const rr = R * (1.35 + i * 0.035);
     const a = 0.12 + r() * 0.35;
-    const c = hue < 0.5 ? `rgba(${220 - i * 2},${200 - i * 3},${170 - i * 3},${a})` : `rgba(${180 + i},${200},${230},${a})`;
-    ctx.strokeStyle = c; ctx.lineWidth = R * 0.035 / tilt * 0.6;
+    ctx.strokeStyle = hue < 0.5 ? `rgba(${220 - i * 2},${200 - i * 3},${170 - i * 3},${a})` : `rgba(${180 + i},200,230,${a})`;
+    ctx.lineWidth = R * 0.021 / tilt;
     ctx.beginPath(); ctx.arc(0, 0, rr, start, end); ctx.stroke();
   }
   ctx.restore();
@@ -285,31 +297,33 @@ function drawRings(ctx, x, y, R, front, seed) {
 // ============================================================================
 const SYL = ['ka', 'ri', 'zan', 'tho', 'vel', 'mar', 'os', 'ae', 'lu', 'qua', 'dor', 'phe', 'ny', 'xi', 'sol', 'ter', 'ion', 'cy', 'bra', 'vex', 'or', 'eth', 'ul', 'sar', 'mi', 'nox', 'rha', 'tal', 'ven', 'zu', 'kel', 'ira', 'an', 'go', 'ser', 'thal'];
 const SUFFIX = ['', '', '', '', ' Prime', ' II', ' IV', ' VII', ' Minor', ' Major', ' Secundus', "'s Reach", ' Tertius'];
-const FACTIONS = ['Solar Concord', 'Free Traders Guild', 'Veyran Hegemony', 'Order of the Lattice', 'Kesh Collective', 'Independent', 'Unclaimed'];
+// Placeholder faction names; uninhabited worlds are always UNCLAIMED.
+const FACTIONS = ['Solar Concord', 'Free Traders Guild', 'Veyran Hegemony', 'Order of the Lattice', 'Kesh Collective', 'Independent'];
+const UNCLAIMED = 'Unclaimed';
 const ADJ = ['Glass', 'Silent', 'Crimson', 'Sunken', 'Shattered', 'Singing', 'Hollow', 'Gilded', 'Drowned', 'Burning', 'Pale', 'Iron', 'Whispering', 'Obsidian'];
 const RESOURCES = {
-  'Terran': ['Fresh water', 'Arable land', 'Timber', 'Rare earths', 'Livestock', 'Iron ore'],
-  'Ocean': ['Deuterium', 'Kelp biomass', 'Pearlescent coral', 'Fresh water', 'Bioluminescent algae'],
-  'Jungle': ['Medicinal flora', 'Hardwood', 'Spice resin', 'Exotic fauna', 'Bio-polymers'],
-  'Desert': ['Silicates', 'Solar energy', 'Glass sand', 'Titanium', 'Ancient relics'],
-  'Ice': ['Water ice', 'Frozen methane', 'Cryo-crystals', 'Helium-3', 'Preserved fossils'],
-  'Volcanic': ['Obsidian', 'Sulfur', 'Geothermal energy', 'Platinum', 'Heavy metals'],
+  Terran: ['Fresh water', 'Arable land', 'Timber', 'Rare earths', 'Livestock', 'Iron ore'],
+  Ocean: ['Deuterium', 'Kelp biomass', 'Pearlescent coral', 'Fresh water', 'Bioluminescent algae'],
+  Jungle: ['Medicinal flora', 'Hardwood', 'Spice resin', 'Exotic fauna', 'Bio-polymers'],
+  Desert: ['Silicates', 'Solar energy', 'Glass sand', 'Titanium', 'Ancient relics'],
+  Ice: ['Water ice', 'Frozen methane', 'Cryo-crystals', 'Helium-3', 'Preserved fossils'],
+  Volcanic: ['Obsidian', 'Sulfur', 'Geothermal energy', 'Platinum', 'Heavy metals'],
   'Gas Giant': ['Helium-3', 'Hydrogen', 'Exotic gases', 'Metallic hydrogen', 'Atmospheric plankton'],
-  'Barren': ['Nickel-iron', 'Regolith', 'Cobalt', 'Helium-3', 'Platinum'],
-  'Crystal': ['Resonance crystals', 'Quartz lattices', 'Psionic shards', 'Dilithium', 'Prismatic glass'],
-  'Toxic': ['Chlorine', 'Ammonia', 'Industrial acids', 'Xenobacteria', 'Sulfuric compounds'],
+  Barren: ['Nickel-iron', 'Regolith', 'Cobalt', 'Helium-3', 'Platinum'],
+  Crystal: ['Resonance crystals', 'Quartz lattices', 'Psionic shards', 'Dilithium', 'Prismatic glass'],
+  Toxic: ['Chlorine', 'Ammonia', 'Industrial acids', 'Xenobacteria', 'Sulfuric compounds'],
 };
 const DESC = {
-  'Terran': ['{n} is a temperate world of drifting continents, deep blue seas and long, gentle seasons.', 'Green and blue, {n} is the kind of world colonists dream about — and fight over.'],
-  'Ocean': ['{n} is almost entirely covered by a single planetary ocean, kilometres deep and teeming with life.', 'Floating cities ride the endless swells of {n}, tethered to the abyss below.'],
-  'Jungle': ['A canopy hundreds of metres tall shrouds {n}, hiding rivers, ruins and things best left alone.', '{n} is a humid, overgrown world where the forest reclaims anything left standing for long.'],
-  'Desert': ['Wind-carved dunes roll across {n} beneath a merciless sun.', '{n} is a parched world of red canyons and glassy salt flats, its oceans long since boiled away.'],
-  'Ice': ['{n} is locked beneath glaciers older than most stars in the sector.', 'Beneath the frozen crust of {n}, a liquid ocean may still be churning in the dark.'],
-  'Volcanic': ['Rivers of lava split the obsidian plains of {n}, and the sky glows orange at night.', '{n} is tidally tortured by its neighbours, its crust erupting without pause.'],
+  Terran: ['{n} is a temperate world of drifting continents, deep blue seas and long, gentle seasons.', 'Green and blue, {n} is the kind of world colonists dream about — and fight over.'],
+  Ocean: ['{n} is almost entirely covered by a single planetary ocean, kilometres deep and teeming with life.', 'Floating cities ride the endless swells of {n}, tethered to the abyss below.'],
+  Jungle: ['A canopy hundreds of metres tall shrouds {n}, hiding rivers, ruins and things best left alone.', '{n} is a humid, overgrown world where the forest reclaims anything left standing for long.'],
+  Desert: ['Wind-carved dunes roll across {n} beneath a merciless sun.', '{n} is a parched world of red canyons and glassy salt flats, its oceans long since boiled away.'],
+  Ice: ['{n} is locked beneath glaciers older than most stars in the sector.', 'Beneath the frozen crust of {n}, a liquid ocean may still be churning in the dark.'],
+  Volcanic: ['Rivers of lava split the obsidian plains of {n}, and the sky glows orange at night.', '{n} is tidally tortured by its neighbours, its crust erupting without pause.'],
   'Gas Giant': ['{n} is a banded giant of hydrogen and helium, its storms large enough to swallow lesser worlds.', 'Cloud-skimming refineries drift through the upper atmosphere of {n}.'],
-  'Barren': ['{n} is an airless rock, scarred by billions of years of impacts.', 'Little more than a cratered husk, {n} is valued only for what lies beneath its dust.'],
-  'Crystal': ['Vast crystalline formations cover {n}, humming softly when starlight strikes them.', 'The surface of {n} refracts light into shifting aurorae; scholars still argue over whether the crystals grow.'],
-  'Toxic': ['Thick, caustic clouds hide the surface of {n} from view.', '{n} is wrapped in acid rain and yellow haze — deadly, but rich in industrial chemistry.'],
+  Barren: ['{n} is an airless rock, scarred by billions of years of impacts.', 'Little more than a cratered husk, {n} is valued only for what lies beneath its dust.'],
+  Crystal: ['Vast crystalline formations cover {n}, humming softly when starlight strikes them.', 'The surface of {n} refracts light into shifting aurorae; scholars still argue over whether the crystals grow.'],
+  Toxic: ['Thick, caustic clouds hide the surface of {n} from view.', '{n} is wrapped in acid rain and yellow haze — deadly, but rich in industrial chemistry.'],
 };
 const FLAVOR = [
   'Orbital shipyards hang above its equator like a string of pearls.',
@@ -344,25 +358,24 @@ function makeWorld(R, x, y, type, name) {
   const def = TYPES[type];
   const range = (a, b) => a + R() * (b - a);
   const pick = a => a[(R() * a.length) | 0];
-  const habit = { Terran: 1, Ocean: 0.9, Jungle: 0.8, Desert: 0.4, Ice: 0.3, 'Gas Giant': 0.2, Toxic: 0.1, Volcanic: 0.1, Barren: 0.15, Crystal: 0.2 }[type];
   let pop = 0;
-  if (R() < habit + 0.2) pop = Math.round(Math.pow(R(), 2) * habit * 1.2e10 + R() * 5e6);
+  if (R() < def.habit + 0.2) pop = Math.round(Math.pow(R(), 2) * def.habit * 1.2e10 + R() * 5e6);
   const res = [...RESOURCES[type]].sort(() => R() - 0.5).slice(0, 2 + ((R() * 3) | 0));
   const poi = [...POI_T].sort(() => R() - 0.5).slice(0, 2 + ((R() * 3) | 0))
     .map(([t, d]) => t.replace('{a}', pick(ADJ)).replace('{s}', syllName(R, 2)) + ' — ' + d);
   return {
-    id: 'w' + Math.floor(R() * 1e9).toString(36),
+    id: 'w' + Math.floor(R() * 1e9).toString(36), // seeded, so a galaxy seed always reproduces the same ids
     name, type, x: Math.round(x), y: Math.round(y),
     size: Math.round(range(def.size[0], def.size[1])),
     seed: (R() * 2 ** 31) | 0,
-    faction: pop ? pick(FACTIONS.slice(0, 6)) : 'Unclaimed',
+    faction: pop ? pick(FACTIONS) : UNCLAIMED,
     population: pop,
     climate: def.climate,
     temperature: Math.round(range(def.temp[0], def.temp[1])),
     gravity: +range(def.grav[0], def.grav[1]).toFixed(2),
-    dayLength: +range(type === 'Gas Giant' ? 8 : 14, type === 'Gas Giant' ? 16 : 60).toFixed(1),
-    moons: type === 'Gas Giant' ? 2 + ((R() * 5) | 0) : (R() < 0.55 ? (R() * 3) | 0 : 0),
-    rings: type === 'Gas Giant' ? R() < 0.6 : R() < 0.07,
+    dayLength: +range(def.day[0], def.day[1]).toFixed(1),
+    moons: def.gas ? 2 + ((R() * 5) | 0) : (R() < 0.55 ? (R() * 3) | 0 : 0),
+    rings: def.gas ? R() < 0.6 : R() < 0.07,
     description: pick(DESC[type]).replace('{n}', name) + ' ' + pick(FLAVOR),
     resources: res,
     poi,
@@ -377,17 +390,15 @@ function segIntersect(a, b, c, d) {
 
 function generateGalaxy(seed) {
   const R = mulberry32(seed);
-  const gauss = () => (R() + R() + R() - 1.5) / 1.5;
   const weights = [['Terran', 3], ['Ocean', 2], ['Desert', 3], ['Ice', 3], ['Volcanic', 2], ['Gas Giant', 4], ['Jungle', 2], ['Barren', 4], ['Crystal', 1.2], ['Toxic', 2]];
   const total = weights.reduce((s, w) => s + w[1], 0);
   const pickType = () => { let r = R() * total; for (const [t, w] of weights) { if ((r -= w) <= 0) return t; } return 'Barren'; };
-  const arms = 3, count = 36 + ((R() * 10) | 0);
+  const count = 36 + ((R() * 10) | 0);
   const worlds = [], names = new Set();
   for (let tries = 0; worlds.length < count && tries < 6000; tries++) {
-    const arm = tries % arms;
-    const dist = 170 + Math.pow(R(), 0.85) * 1150;
-    const ang = (arm * Math.PI * 2) / arms + dist * 0.0042 + gauss() * 0.32;
-    const x = Math.cos(ang) * dist, y = Math.sin(ang) * dist;
+    const radius = 170 + Math.pow(R(), 0.85) * 1150;
+    const ang = spiralAngle(tries % ARMS, radius) + gaussian(R) * 0.32;
+    const x = Math.cos(ang) * radius, y = Math.sin(ang) * radius;
     if (worlds.some(w => Math.hypot(w.x - x, w.y - y) < 90)) continue;
     let name;
     do { name = syllName(R, 2 + (R() < 0.35 ? 1 : 0)) + SUFFIX[(R() * SUFFIX.length) | 0]; } while (names.has(name));
@@ -395,7 +406,8 @@ function generateGalaxy(seed) {
     worlds.push(makeWorld(R, x, y, pickType(), name));
   }
   // Minimum spanning tree guarantees everything is reachable.
-  const routes = [], dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+  const routes = [], byId = new Map(worlds.map(w => [w.id, w]));
+  const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
   const inTree = new Set([0]);
   while (inTree.size < worlds.length) {
     let best = null;
@@ -405,7 +417,7 @@ function generateGalaxy(seed) {
       if (!best || d < best[2]) best = [i, j, d];
     }
     inTree.add(best[1]);
-    routes.push(mkRoute(worlds[best[0]], worlds[best[1]], R() < 0.3 ? 'trade' : 'hyperlane'));
+    routes.push(makeRoute(worlds[best[0]], worlds[best[1]], R() < 0.3 ? 'trade' : 'hyperlane'));
   }
   // Extra lanes for loops / alternate paths, avoiding crossings.
   for (const w of worlds) {
@@ -413,22 +425,22 @@ function generateGalaxy(seed) {
     for (const o of near) {
       if (dist(w, o) > 300 || R() < 0.45) continue;
       if (routes.some(r => (r.a === w.id && r.b === o.id) || (r.a === o.id && r.b === w.id))) continue;
-      const crosses = routes.some(r => r.kind !== 'wormhole' && segIntersect(w, o, byIdIn(worlds, r.a), byIdIn(worlds, r.b)));
-      if (!crosses) routes.push(mkRoute(w, o, R() < 0.25 ? 'trade' : 'hyperlane'));
+      const crosses = routes.some(r => r.kind !== 'wormhole' && segIntersect(w, o, byId.get(r.a), byId.get(r.b)));
+      if (!crosses) routes.push(makeRoute(w, o, R() < 0.25 ? 'trade' : 'hyperlane'));
     }
   }
   // A few long-range wormholes.
   for (let i = 0, made = 0; i < 200 && made < 3; i++) {
     const a = worlds[(R() * worlds.length) | 0], b = worlds[(R() * worlds.length) | 0];
-    if (a !== b && dist(a, b) > 900) { routes.push(mkRoute(a, b, 'wormhole')); made++; }
+    if (a !== b && dist(a, b) > 900) { routes.push(makeRoute(a, b, 'wormhole')); made++; }
   }
   const gname = syllName(R, 2) + ' ' + ['Spiral', 'Expanse', 'Cluster', 'Galaxy', 'Nebula'][(R() * 5) | 0];
   return { version: 1, name: gname, seed, worlds, routes };
 }
-function byIdIn(list, id) { return list.find(w => w.id === id); }
-function mkRoute(a, b, kind) {
+function makeRoute(a, b, kind) {
   const d = Math.hypot(a.x - b.x, a.y - b.y);
-  return { id: 'r' + Math.floor(Math.random() * 1e9).toString(36), a: a.id, b: b.id, kind, days: kind === 'wormhole' ? 1 : Math.max(1, Math.round(d / (kind === 'trade' ? 28 : 34))) };
+  const days = kind === 'wormhole' ? 1 : Math.max(1, Math.round(d / (kind === 'trade' ? 28 : 34)));
+  return { id: uid('r'), a: a.id, b: b.id, kind, days };
 }
 
 // ============================================================================
@@ -450,8 +462,9 @@ const otherEnd = (r, w) => worldById(r.a === w.id ? r.b : r.a);
 function normalize(g) {
   if (!g || !Array.isArray(g.worlds) || !Array.isArray(g.routes)) throw new Error('Not a galaxy file');
   const R = mulberry32(randSeed());
+  g.version = 1;
   g.name = String(g.name || 'Unnamed Galaxy');
-  g.seed = g.seed | 0 || randSeed();
+  g.seed = (g.seed | 0) || randSeed();
   g.worlds = g.worlds.map(w => {
     const type = TYPES[w.type] ? w.type : 'Barren';
     const base = makeWorld(R, +w.x || 0, +w.y || 0, type, String(w.name || 'Unnamed'));
@@ -459,26 +472,32 @@ function normalize(g) {
   });
   const ids = new Set(g.worlds.map(w => w.id));
   g.routes = g.routes.filter(r => ids.has(r.a) && ids.has(r.b) && r.a !== r.b)
-    .map(r => ({ id: r.id || 'r' + Math.random().toString(36).slice(2, 9), a: r.a, b: r.b, kind: ROUTE_KINDS[r.kind] ? r.kind : 'hyperlane', days: Math.max(1, +r.days || 1) }));
+    .map(r => ({ id: r.id || uid('r'), a: r.a, b: r.b, kind: ROUTE_KINDS[r.kind] ? r.kind : 'hyperlane', days: Math.max(1, +r.days || 1) }));
   return g;
 }
 
 let saveTimer = 0;
 function save() {
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => { try { localStorage.setItem(STORE_KEY, JSON.stringify(G)); } catch (e) { /* storage unavailable */ } }, 300);
+  saveTimer = setTimeout(() => {
+    try { localStorage.setItem(STORE_KEY, JSON.stringify(G)); } catch { /* storage unavailable (private mode, quota) */ }
+  }, 300);
 }
 function load() {
-  try { const raw = localStorage.getItem(STORE_KEY); if (raw) return normalize(JSON.parse(raw)); } catch (e) { /* ignore */ }
+  try {
+    const raw = localStorage.getItem(STORE_KEY);
+    if (raw) return normalize(JSON.parse(raw));
+  } catch { /* unreadable or corrupt save: fall back to the default galaxy */ }
   return generateGalaxy(20261119);
 }
 
 // ============================================================================
 // Canvas setup
 // ============================================================================
-const canvas = document.getElementById('galaxy');
+const $ = s => document.querySelector(s);
+const canvas = $('#galaxy');
 const ctx = canvas.getContext('2d');
-const pcanvas = document.getElementById('planetCanvas');
+const pcanvas = $('#planetCanvas');
 const pctx = pcanvas.getContext('2d');
 let W = 0, H = 0, DPR = 1;
 
@@ -530,16 +549,14 @@ function buildDust() {
   };
   const sprites = [sprite('90,120,255'), sprite('160,90,255'), sprite('255,120,190'), sprite('120,200,255'), sprite('255,220,180')];
   const R = mulberry32(G.seed);
-  const gauss = () => (R() + R() + R() - 1.5) / 1.5;
   const cx = size / 2;
   d.globalCompositeOperation = 'lighter';
   const core = d.createRadialGradient(cx, cx, 0, cx, cx, 520 * DUST_SCALE);
   core.addColorStop(0, 'rgba(255,230,200,0.55)'); core.addColorStop(0.3, 'rgba(255,170,150,0.18)'); core.addColorStop(1, 'rgba(120,80,200,0)');
   d.fillStyle = core; d.fillRect(0, 0, size, size);
   for (let i = 0; i < 4200; i++) {
-    const arm = i % 3;
     const dist = Math.pow(R(), 0.8) * 1450;
-    const ang = (arm * Math.PI * 2) / 3 + dist * 0.0042 + gauss() * (0.22 + 0.25 * (1 - dist / 1450));
+    const ang = spiralAngle(i % ARMS, dist) + gaussian(R) * (0.22 + 0.25 * (1 - dist / 1450));
     const x = cx + Math.cos(ang) * dist * DUST_SCALE, y = cx + Math.sin(ang) * dist * DUST_SCALE;
     const sp = dist < 300 ? sprites[4] : sprites[(R() * 4) | 0];
     const s = (12 + R() * 60) * DUST_SCALE;
@@ -548,8 +565,8 @@ function buildDust() {
   }
   d.globalAlpha = 1;
   for (let i = 0; i < 2600; i++) {
-    const arm = i % 3, dist = Math.pow(R(), 0.7) * 1500;
-    const ang = (arm * Math.PI * 2) / 3 + dist * 0.0042 + gauss() * 0.45;
+    const dist = Math.pow(R(), 0.7) * 1500;
+    const ang = spiralAngle(i % ARMS, dist) + gaussian(R) * 0.45;
     d.fillStyle = `rgba(255,255,255,${0.2 + R() * 0.6})`;
     const s = R() < 0.1 ? 1.6 : 0.8;
     d.fillRect(cx + Math.cos(ang) * dist * DUST_SCALE, cx + Math.sin(ang) * dist * DUST_SCALE, s, s);
@@ -565,7 +582,7 @@ function routeCurve(r) {
   const [ax, ay] = toScreen(a.x, a.y), [bx, by] = toScreen(b.x, b.y);
   let mx = (ax + bx) / 2, my = (ay + by) / 2;
   if (r.kind === 'wormhole') { const dx = bx - ax, dy = by - ay; mx += -dy * 0.18; my += dx * 0.18; }
-  return { ax, ay, bx, by, mx, my, a, b };
+  return { ax, ay, bx, by, mx, my };
 }
 function qPoint(c, t) {
   const u = 1 - t;
@@ -613,13 +630,12 @@ function drawGalaxy(t) {
         ctx.beginPath(); ctx.arc(px, py, 2.6, 0, Math.PI * 2); ctx.fill();
       }
     }
-    if ((z > 1.1 || hl) && r.kind !== 'wormhole' || (hl && r.kind === 'wormhole')) {
+    // Travel-time label: always when highlighted; otherwise only zoomed in (wormholes never, they're always 1d).
+    if (hl || (z > 1.1 && r.kind !== 'wormhole')) {
       const [lx, ly] = qPoint(c, 0.5);
-      if (z > 1.1 || hl) {
-        ctx.font = '11px ui-sans-serif, system-ui, sans-serif'; ctx.textAlign = 'center';
-        ctx.fillStyle = `rgba(${cr},${cg},${cb},${0.85 * dim})`;
-        ctx.fillText(`${r.days}d`, lx, ly - 5);
-      }
+      ctx.font = `11px ${FONT}`; ctx.textAlign = 'center';
+      ctx.fillStyle = `rgba(${cr},${cg},${cb},${0.85 * dim})`;
+      ctx.fillText(`${r.days}d`, lx, ly - 5);
     }
   }
   // Connect-mode rubber band
@@ -661,9 +677,9 @@ function drawGalaxy(t) {
       } else state.focusPulse = null;
     }
     if (z > 0.3 || isSel || isHover || (pathWorlds && pathWorlds.has(w.id))) {
-      ctx.font = `${isHover || isSel ? 600 : 500} ${z > 1.5 ? 13 : 12}px ui-sans-serif, system-ui, sans-serif`;
+      ctx.font = `${isHover || isSel ? 600 : 500} ${z > 1.5 ? 13 : 12}px ${FONT}`;
       ctx.textAlign = 'center';
-      ctx.fillStyle = `rgba(0,0,0,0.6)`; ctx.fillText(w.name, sx + 1, sy + r + 15);
+      ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillText(w.name, sx + 1, sy + r + 15);
       ctx.fillStyle = `rgba(228,234,255,${0.9 * dim})`; ctx.fillText(w.name, sx, sy + r + 14);
     }
   }
@@ -677,7 +693,15 @@ function hexA(hex, a) {
 // Detail (world) rendering
 // ============================================================================
 const MOON_TILT = 0.42, DETAIL_TEX = 1024;
-let detailImg = null, detailBuf = null, detailRot = 0;
+let detailImg = null, detailBuf = null, detailBufCtx = null, detailRot = 0;
+
+function drawMoon(c, m) {
+  const g = c.createRadialGradient(m.x - m.s * 0.4, m.y - m.s * 0.4, m.s * 0.1, m.x, m.y, m.s);
+  const base = m.tint < 0.5 ? [200, 195, 190] : [210, 180, 150];
+  g.addColorStop(0, `rgb(${base})`); g.addColorStop(0.7, `rgb(${base.map(v => (v * 0.45) | 0)})`); g.addColorStop(1, 'rgb(15,15,20)');
+  c.fillStyle = g; c.beginPath(); c.arc(m.x, m.y, m.s, 0, Math.PI * 2); c.fill();
+}
+
 function drawDetail(t, dt) {
   const w = state.detail; if (!w) return;
   const cw = pcanvas.width, ch = pcanvas.height;
@@ -706,32 +730,27 @@ function drawDetail(t, dt) {
     const a = mr() * Math.PI * 2 + t * speed;
     const size = R * (0.05 + mr() * 0.07);
     const tint = mr();
-    moons.push({ x: cx + Math.cos(a) * orbit, y: cy + Math.sin(a) * orbit * MOON_TILT, s: size, front: Math.sin(a) > 0, tint, a, orbit });
+    moons.push({ x: cx + Math.cos(a) * orbit, y: cy + Math.sin(a) * orbit * MOON_TILT, s: size, front: Math.sin(a) > 0, tint, orbit });
   }
-  const drawOrbit = m => { c.strokeStyle = 'rgba(180,200,255,0.08)'; c.lineWidth = 1 * DPR; c.save(); c.translate(cx, cy); c.beginPath(); c.ellipse(0, 0, m.orbit, m.orbit * MOON_TILT, 0, 0, Math.PI * 2); c.stroke(); c.restore(); };
-  for (const m of moons) drawOrbit(m);
-  const drawMoon = m => {
-    const g = c.createRadialGradient(m.x - m.s * 0.4, m.y - m.s * 0.4, m.s * 0.1, m.x, m.y, m.s);
-    const base = m.tint < 0.5 ? [200, 195, 190] : [210, 180, 150];
-    g.addColorStop(0, `rgb(${base})`); g.addColorStop(0.7, `rgb(${base.map(v => v * 0.45 | 0)})`); g.addColorStop(1, 'rgb(15,15,20)');
-    c.fillStyle = g; c.beginPath(); c.arc(m.x, m.y, m.s, 0, Math.PI * 2); c.fill();
-  };
-  for (const m of moons) if (!m.front) drawMoon(m);
+  c.strokeStyle = 'rgba(180,200,255,0.08)'; c.lineWidth = DPR;
+  for (const m of moons) { c.beginPath(); c.ellipse(cx, cy, m.orbit, m.orbit * MOON_TILT, 0, 0, Math.PI * 2); c.stroke(); }
+  for (const m of moons) if (!m.front) drawMoon(c, m);
   if (w.rings) drawRings(c, cx, cy, R, false, w.seed);
 
   // planet sphere
   const S = Math.min(560, Math.round(R * 2));
   if (!detailBuf || detailBuf.width !== S) {
     detailBuf = document.createElement('canvas'); detailBuf.width = detailBuf.height = S;
-    detailImg = detailBuf.getContext('2d').createImageData(S, S);
+    detailBufCtx = detailBuf.getContext('2d');
+    detailImg = detailBufCtx.createImageData(S, S);
   }
   detailRot += dt * 0.000012 * (24 / Math.max(4, w.dayLength)) * 1.6;
-  renderSphere(detailBuf.getContext('2d'), detailImg, getSphereMap(S), getTexture(w, DETAIL_TEX), w, detailRot, detailRot * 1.18 + 0.1);
+  renderSphere(detailBufCtx, detailImg, getSphereMap(S), getTexture(w, DETAIL_TEX), w, detailRot, detailRot * 1.18 + 0.1);
   c.imageSmoothingEnabled = true;
   c.drawImage(detailBuf, cx - R, cy - R, R * 2, R * 2);
 
   if (w.rings) drawRings(c, cx, cy, R, true, w.seed);
-  for (const m of moons) if (m.front) drawMoon(m);
+  for (const m of moons) if (m.front) drawMoon(c, m);
 }
 
 // ============================================================================
@@ -745,14 +764,14 @@ function frame(t) {
     state.cam.x = lerp(tw.from.x, tw.to.x, e);
     state.cam.y = lerp(tw.from.y, tw.to.y, e);
     state.cam.zoom = Math.exp(lerp(Math.log(tw.from.zoom), Math.log(tw.to.zoom), e));
-    if (k >= 1) { state.tween = null; tw.done && tw.done(); }
+    if (k >= 1) { state.tween = null; tw.done?.(); }
   }
   if (state.view !== 'detail' || state.tween) drawGalaxy(t);
   if (state.view === 'detail') drawDetail(t, dt);
   requestAnimationFrame(frame);
 }
 function flyTo(x, y, zoom, dur = 800, done) {
-  state.tween = { start: performance.now(), dur, from: { ...state.cam }, to: { x, y, zoom: clamp(zoom, 0.12, 8) }, done };
+  state.tween = { start: performance.now(), dur, from: { ...state.cam }, to: { x, y, zoom: clamp(zoom, ZOOM_MIN, ZOOM_MAX) }, done };
 }
 function fitView(animate = true) {
   if (!G.worlds.length) { flyTo(0, 0, 0.5); return; }
@@ -761,11 +780,11 @@ function fitView(animate = true) {
   const zoom = Math.min((W - 80) / (x1 - x0 + 160), (H - 160) / (y1 - y0 + 160));
   const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2 - 20 / zoom;
   if (animate) flyTo(cx, cy, zoom, 700);
-  else Object.assign(state.cam, { x: cx, y: cy, zoom: clamp(zoom, 0.12, 8) });
+  else Object.assign(state.cam, { x: cx, y: cy, zoom: clamp(zoom, ZOOM_MIN, ZOOM_MAX) });
 }
 function zoomAt(sx, sy, factor) {
   const [wx, wy] = toWorld(sx, sy);
-  state.cam.zoom = clamp(state.cam.zoom * factor, 0.12, 8);
+  state.cam.zoom = clamp(state.cam.zoom * factor, ZOOM_MIN, ZOOM_MAX);
   const [nx, ny] = toWorld(sx, sy);
   state.cam.x += wx - nx; state.cam.y += wy - ny;
 }
@@ -796,9 +815,14 @@ function routeAt(sx, sy) {
 }
 
 const pointer = { map: new Map(), drag: null, pinch: null, last: null };
-const tooltip = document.getElementById('tooltip');
+const tooltip = $('#tooltip');
+
+// While flying into or out of a world the map is not interactive; touching it would cancel
+// the camera animation and leave the app stuck between views.
+const mapLocked = () => state.view !== 'galaxy';
 
 canvas.addEventListener('pointerdown', e => {
+  if (mapLocked()) return;
   canvas.setPointerCapture(e.pointerId);
   pointer.map.set(e.pointerId, [e.clientX, e.clientY]);
   closeMenus();
@@ -813,6 +837,7 @@ canvas.addEventListener('pointerdown', e => {
   else pointer.drag = { type: 'pan', sx: e.clientX, sy: e.clientY, cx: state.cam.x, cy: state.cam.y, moved: false };
 });
 canvas.addEventListener('pointermove', e => {
+  if (mapLocked()) return;
   pointer.last = [e.clientX, e.clientY];
   if (pointer.map.has(e.pointerId)) pointer.map.set(e.pointerId, [e.clientX, e.clientY]);
   if (pointer.pinch && pointer.map.size === 2) {
@@ -854,9 +879,9 @@ function endPointer(e) {
 canvas.addEventListener('pointerup', endPointer);
 canvas.addEventListener('pointercancel', endPointer);
 canvas.addEventListener('pointerleave', () => { if (!pointer.drag) { state.hover = null; tooltip.hidden = true; } });
-canvas.addEventListener('wheel', e => { e.preventDefault(); state.tween = null; zoomAt(e.clientX, e.clientY, Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.0015))); }, { passive: false });
+canvas.addEventListener('wheel', e => { e.preventDefault(); if (mapLocked()) return; state.tween = null; zoomAt(e.clientX, e.clientY, Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.0015))); }, { passive: false });
 canvas.addEventListener('dblclick', e => {
-  if (state.mode !== 'edit' || worldAt(e.clientX, e.clientY)) return;
+  if (mapLocked() || state.mode !== 'edit' || worldAt(e.clientX, e.clientY)) return;
   const [x, y] = toWorld(e.clientX, e.clientY);
   addWorld(x, y);
 });
@@ -890,7 +915,6 @@ function addWorld(x, y) {
   const R = mulberry32(randSeed());
   const type = TYPE_NAMES[(R() * TYPE_NAMES.length) | 0];
   const w = makeWorld(R, x, y, type, uniqueName('New World'));
-  w.description = w.description.replace(/New World( \d+)?/g, w.name);
   G.worlds.push(w);
   state.selected = w; state.selectedRoute = null;
   save(); refreshEditBar(); refreshRouteSelects();
@@ -899,7 +923,7 @@ function addWorld(x, y) {
 function toggleRoute(a, b) {
   const ex = G.routes.find(r => (r.a === a.id && r.b === b.id) || (r.a === b.id && r.b === a.id));
   if (ex) { G.routes = G.routes.filter(r => r !== ex); toast(`Removed route ${a.name} ⇄ ${b.name}`); }
-  else { G.routes.push(mkRoute(a, b, 'hyperlane')); toast(`Connected ${a.name} ⇄ ${b.name}`); }
+  else { G.routes.push(makeRoute(a, b, 'hyperlane')); toast(`Connected ${a.name} ⇄ ${b.name}`); }
   state.path = null; save();
 }
 function deleteWorld(w) {
@@ -909,6 +933,11 @@ function deleteWorld(w) {
   if (state.selected === w) state.selected = null;
   state.path = null; save(); refreshEditBar(); refreshRouteSelects();
   return true;
+}
+function deleteRoute(id) {
+  G.routes = G.routes.filter(r => r.id !== id);
+  if (state.selectedRoute === id) state.selectedRoute = null;
+  state.path = null; save(); refreshEditBar();
 }
 
 // ============================================================================
@@ -947,7 +976,6 @@ function findPath(fromId, toId, avoidWormholes) {
 // ============================================================================
 // UI: helpers
 // ============================================================================
-const $ = s => document.querySelector(s);
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function fmtPop(n) {
   n = +n || 0;
@@ -1017,7 +1045,7 @@ function renderSearch() {
   const hits = G.worlds.filter(w => (w.name + ' ' + w.type + ' ' + w.faction).toLowerCase().includes(q)).slice(0, 12);
   searchRes.innerHTML = hits.length
     ? hits.map(w => `<button data-id="${w.id}">${dotFor(w)}${esc(w.name)}<span class="meta">${w.type}</span></button>`).join('')
-    : '<div class="empty" style="padding:8px 10px">No worlds found</div>';
+    : '<div class="empty pad">No worlds found</div>';
   searchRes.hidden = false;
 }
 searchRes.addEventListener('click', e => {
@@ -1040,7 +1068,7 @@ $('#zoomCtl').addEventListener('click', e => {
 
 // ---------- Route planner ----------
 $('#btnRoute').addEventListener('click', () => toggleRoutePanel());
-document.querySelectorAll('[data-close]').forEach(b => b.addEventListener('click', () => { $('#' + b.dataset.close).hidden = true; $('#btnRoute').classList.remove('active'); }));
+$('#routePanel .close').addEventListener('click', () => toggleRoutePanel(false));
 function toggleRoutePanel(show) {
   const p = $('#routePanel');
   p.hidden = show === undefined ? !p.hidden : !show;
@@ -1067,7 +1095,7 @@ function planRoute() {
   if (!p) { out.innerHTML = '<p class="empty">No route connects these worlds.</p>'; return; }
   out.innerHTML = `<div class="total">${p.total} days · ${p.steps.length} jump${p.steps.length === 1 ? '' : 's'}</div><ol class="steps">` +
     `<li>${dotFor(worldById(a))}${esc(worldById(a).name)}<span class="via">start</span></li>` +
-    p.steps.map(s => { const w = worldById(s.to); return `<li>${dotFor(w)}<a href="#" data-id="${w.id}" style="color:inherit">${esc(w.name)}</a><span class="via">${ROUTE_KINDS[s.route.kind].label} · ${s.route.days}d</span></li>`; }).join('') + '</ol>';
+    p.steps.map(s => { const w = worldById(s.to); return `<li>${dotFor(w)}<a href="#" data-id="${w.id}">${esc(w.name)}</a><span class="via">${ROUTE_KINDS[s.route.kind].label} · ${s.route.days}d</span></li>`; }).join('') + '</ol>';
   // frame the path
   const ws = p.worlds.map(worldById);
   const xs = ws.map(w => w.x), ys = ws.map(w => w.y);
@@ -1097,7 +1125,7 @@ function refreshEditBar() {
     const a = worldById(r.a), b = worldById(r.b);
     bar.innerHTML = `<div class="title grow">${esc(a.name)} ⇄ ${esc(b.name)}</div>
       <select data-e="kind">${Object.entries(ROUTE_KINDS).map(([k, v]) => `<option value="${k}" ${k === r.kind ? 'selected' : ''}>${v.label}</option>`).join('')}</select>
-      <label class="hint">Days <input type="number" min="1" value="${r.days}" data-e="days" style="width:64px;padding:5px 7px;border-radius:7px;border:1px solid var(--border);background:rgba(0,0,0,.35)"></label>
+      <label class="hint">Days <input type="number" min="1" value="${r.days}" data-e="days" class="days"></label>
       <button class="btn small danger" data-e="delroute">Delete route</button>`;
   } else {
     bar.innerHTML = `<div class="hint grow"><b>Edit mode.</b> Double-click empty space to add a world · drag worlds to move them · select a world then <b>Connect…</b> (or Shift+click) to link worlds · click a route to change it.</div>`;
@@ -1110,7 +1138,7 @@ $('#editBar').addEventListener('click', e => {
   if (act === 'open' && w) return openWorld(w, true);
   if (act === 'connect' && w) state.connectFrom = w;
   if (act === 'delete' && w) deleteWorld(w);
-  if (act === 'delroute') { G.routes = G.routes.filter(r => r.id !== state.selectedRoute); state.selectedRoute = null; state.path = null; save(); }
+  if (act === 'delroute') deleteRoute(state.selectedRoute);
   refreshEditBar();
 });
 $('#editBar').addEventListener('change', e => {
@@ -1173,7 +1201,7 @@ addEventListener('keydown', e => {
   }
   if ((e.key === 'Delete' || e.key === 'Backspace') && state.mode === 'edit' && state.view === 'galaxy') {
     if (state.selected) deleteWorld(state.selected);
-    else if (state.selectedRoute) { G.routes = G.routes.filter(r => r.id !== state.selectedRoute); state.selectedRoute = null; save(); refreshEditBar(); }
+    else if (state.selectedRoute) deleteRoute(state.selectedRoute);
   }
 });
 
@@ -1221,7 +1249,7 @@ const stat = (k, v) => `<div class="stat"><div class="k">${k}</div><div class="v
 function renderEditForm(w) {
   const f = (label, key, type = 'text', extra = '') => `<label class="field">${label}<input name="${key}" type="${type}" value="${esc(w[key])}" ${extra}></label>`;
   panel.innerHTML = `
-    <h1 style="font-size:22px">Edit world</h1>
+    <h1 class="small">Edit world</h1>
     <form class="form" id="worldForm">
       ${f('Name', 'name', 'text', 'required')}
       <div class="two">
@@ -1238,7 +1266,7 @@ function renderEditForm(w) {
       <div class="toolbar">
         <button class="btn primary" type="submit">Save</button>
         <button class="btn" type="button" data-a="cancel">Cancel</button>
-        <button class="btn danger" type="button" data-a="delete" style="margin-left:auto">Delete world</button>
+        <button class="btn danger push-right" type="button" data-a="delete">Delete world</button>
       </div>
     </form>`;
   $('#worldForm').addEventListener('submit', e => {

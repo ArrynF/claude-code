@@ -84,6 +84,7 @@ select option { background: var(--panel-solid); }
 .steps { list-style: none; padding: 0; margin: 8px 0 0; }
 .steps li { display: flex; gap: 8px; align-items: center; padding: 5px 0; border-bottom: 1px dashed var(--border); }
 .steps li:last-child { border: 0; }
+#routeResult a { color: inherit; }
 .steps .via { color: var(--muted); font-size: 12px; margin-left: auto; }
 .total { font-weight: 650; }
 
@@ -92,6 +93,7 @@ select option { background: var(--panel-solid); }
 #editBar .title { font-weight: 650; display: flex; gap: 8px; align-items: center; }
 #editBar .grow { flex: 1; }
 #editBar select, #editBar input { width: auto; }
+#editBar input.days { width: 64px; padding: 5px 7px; border-radius: 7px; border: 1px solid var(--border); background: rgba(0,0,0,.35); }
 
 #legend { position: fixed; left: 12px; bottom: 14px; z-index: 5; display: flex; gap: 14px; font-size: 12px; color: var(--muted);
   background: rgba(4,5,12,.6); padding: 6px 10px; border-radius: 8px; }
@@ -142,6 +144,9 @@ body.editing #zoomCtl { bottom: 90px; }
 .links button:hover { background: rgba(122,168,255,.14); border-color: var(--accent); }
 .links .kind { font-size: 12px; color: var(--muted); margin-left: auto; }
 .empty { color: var(--muted); font-size: 14px; }
+.empty.pad { padding: 8px 10px; }
+.push-right { margin-left: auto; }
+#detailPanel h1.small { font-size: 22px; }
 .toolbar { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 24px; }
 
 .form { display: grid; gap: 10px; }
